@@ -1,0 +1,14 @@
+FROM nginx:1.25-alpine
+
+# Remove the default nginx.conf
+RUN rm /etc/nginx/conf.d/default.conf
+
+# Copy custom nginx.conf
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Copy SSL certificates (self-signed for dev)
+COPY letsencrypt/fullchain.pem /etc/ssl/certs/server.crt
+COPY letsencrypt/privkey.pem /etc/ssl/private/server.key
+
+EXPOSE 443
+EXPOSE 80
