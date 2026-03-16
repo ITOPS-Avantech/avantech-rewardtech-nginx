@@ -12,7 +12,13 @@ RUN rm -f /etc/nginx/templates/conf.d/default.conf.template
 # Copy custom nginx.conf as a template so envsubst can process it correctly
 COPY nginx.conf /etc/nginx/templates/nginx.conf.template
 
-# Copy ModSecurity custom overrides & exclusions (loaded after CRS rules)
+# Copy ModSecurity custom overrides & exclusions.
+# We copy to BOTH locations:
+#   1. /etc/nginx/modsecurity.d/  — read by the entrypoint script
+#      (90-copy-modsecurity-config.sh) which overwrites /etc/modsecurity.d/ on startup
+#   2. /etc/modsecurity.d/        — the active runtime location
+# Copying to both ensures the file survives the entrypoint copy step.
+COPY modsecurity-override.conf /etc/nginx/modsecurity.d/modsecurity-override.conf
 COPY modsecurity-override.conf /etc/modsecurity.d/modsecurity-override.conf
 
 # Copy SSL certificates (self-signed for dev)
