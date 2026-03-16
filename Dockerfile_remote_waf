@@ -10,7 +10,7 @@ USER root
 RUN rm -f /etc/nginx/templates/conf.d/default.conf.template
 
 # Copy custom nginx.conf as a template so envsubst can process it correctly
-COPY nginx.conf /etc/nginx/templates/nginx.conf.template
+COPY nginx.conf_remote_waf /etc/nginx/templates/nginx.conf.template
 
 # Copy ModSecurity custom overrides & exclusions.
 # We copy to BOTH locations:
