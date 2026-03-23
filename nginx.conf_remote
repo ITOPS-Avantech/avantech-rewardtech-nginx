@@ -94,6 +94,8 @@ http {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+            # Hide Origin so Spring Boot bypasses strict CORS/CSRF origin checks
+            proxy_set_header Origin "";
             proxy_ssl_verify off;
             # Avoid duplicate CORS headers from upstream
             proxy_hide_header Access-Control-Allow-Origin;

@@ -1,0 +1,9 @@
+FROM owasp/modsecurity-crs:nginx-alpine
+USER root
+RUN rm -f /etc/nginx/templates/conf.d/default.conf.template
+COPY nginx.conf /etc/nginx/templates/nginx.conf.template
+COPY modsecurity-override.conf /etc/nginx/templates/modsecurity.d/modsecurity-override.conf.template
+COPY localhost+2.pem /etc/ssl/certs/server.crt
+COPY localhost+2-key.pem /etc/ssl/private/server.key
+EXPOSE 443
+EXPOSE 80
