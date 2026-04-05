@@ -75,6 +75,9 @@ http {
             proxy_hide_header Access-Control-Allow-Credentials;
             proxy_hide_header Access-Control-Allow-Headers;
             proxy_hide_header Access-Control-Allow-Methods;
+            # Stream Keycloak responses directly — prevents ModSecurity from
+            # buffering large HTML pages and corrupting chunked encoding.
+            proxy_buffering off;
         }
               # Proxy to server call
         location /rewardtech/api/ {
