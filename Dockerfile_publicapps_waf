@@ -1,0 +1,79 @@
+# PUBLICAPPS gateway — nginx + ModSecurity WAF, fully ABI-matched.
+#
+# Why this image: nginx, the ModSecurity v3 connector, OWASP CRS and the
+# headers-more module are all compiled TOGETHER inside this image. That removes
+# the worker SIGSEGV / "malloc(... ) failed" crashes you hit on the Azure VM,
+# which were caused by a hand-built ngx_http_modsecurity_module.so that did not
+# match the distro nginx 1.24.0 ABI.
+FROM owasp/modsecurity-crs:nginx-alpine
+
+USER root
+
+# Remove the image's default server template so our config fully takes over.
+RUN rm -f /etc/nginx/templates/conf.d/default.conf.template
+
+# Our nginx config. The image's entrypoint runs envsubst ONLY on real env vars,
+# so nginx runtime variables ($host, $cors_origin, $binary_remote_addr, ...) are
+# preserved.
+COPY nginx.conf_publicapps_waf /etc/nginx/templates/nginx.conf.template
+
+# Our endpoint-specific ModSecurity overrides (loaded AFTER CRS via the second
+# modsecurity_rules_file directive in nginx.conf). Copied directly (not as a
+# template) to avoid envsubst touching rule syntax.
+COPY modsecurity-override.conf /etc/modsecurity.d/modsecurity-override.conf
+
+# Raise request-body limits at STARTUP. The image generates modsecurity.conf at
+# runtime (entrypoint), so it does not exist at build time — patching it in a
+# build RUN would fail. This entrypoint script (written inline so no extra file
+# needs to be in the build context) runs after the CRS config is generated and
+# before nginx starts. The default 128 KB SecRequestBodyNoFilesLimit rejected the
+# LSTU base64-PNG JSON upload with HTTP 400 (rule 200002 / REQBODY_ERROR); we
+# raise it to 50 MB. nginx (client_max_body_size 50M) and rule 9002002 still cap
+# absolute size at 50 MB.
+RUN cat > /docker-entrypoint.d/97-raise-body-limits.sh <<'EOF' \
+ && chmod +x /docker-entrypoint.d/97-raise-body-limits.sh
+#!/bin/sh
+set -eu
+LIMIT=52428800
+echo "raise-body-limits: setting ModSecurity request-body limits to ${LIMIT} bytes"
+for f in $(grep -rlE 'SecRequestBodyNoFilesLimit|SecRequestBodyLimit ' /etc/modsecurity.d/ 2>/dev/null); do
+    echo "raise-body-limits: patching $f"
+    sed -ri "s/^[[:space:]]*SecRequestBodyLimit[[:space:]]+[0-9]+/SecRequestBodyLimit ${LIMIT}/" "$f" || true
+    sed -ri "s/^[[:space:]]*SecRequestBodyNoFilesLimit[[:space:]]+[0-9]+/SecRequestBodyNoFilesLimit ${LIMIT}/" "$f" || true
+    sed -ri "s/^[[:space:]]*SecRequestBodyLimitAction[[:space:]]+[A-Za-z]+/SecRequestBodyLimitAction ProcessPartial/" "$f" || true
+done
+echo "raise-body-limits: effective values:"
+grep -rE 'SecRequestBody(Limit|NoFilesLimit|LimitAction) ' /etc/modsecurity.d/ 2>/dev/null || true
+EOF
+
+# Disable noisy CRS false-positive rules by appending SecRuleRemoveById to the END
+# of setup.conf — the same file that Includes all CRS rules. Doing it here (after the
+# rules are defined, in the SAME ruleset) guarantees removal at config-parse time,
+# unlike SecRuleRemoveById in a separate modsecurity_rules_file which may not merge.
+#   920420 -> "content type text/plain not allowed"  (findByIncomingURL plain POST)
+#   920440 -> "URL file extension restricted"         (emails ending in .com/.in/... in the path)
+RUN cat > /docker-entrypoint.d/98-disable-crs-falsepositives.sh <<'EOF' \
+ && chmod +x /docker-entrypoint.d/98-disable-crs-falsepositives.sh
+#!/bin/sh
+set -eu
+SETUP=/etc/modsecurity.d/setup.conf
+[ -f "$SETUP" ] || { echo "disable-crs-fp: $SETUP not found, skipping"; exit 0; }
+for id in 920420 920440; do
+    if grep -q "SecRuleRemoveById ${id}" "$SETUP"; then
+        echo "disable-crs-fp: ${id} already removed"
+    else
+        echo "SecRuleRemoveById ${id}" >> "$SETUP"
+        echo "disable-crs-fp: appended SecRuleRemoveById ${id} to $SETUP"
+    fi
+done
+EOF
+
+# Override the base image healthcheck. It probes https://localhost:${SSL_PORT}/healthz
+# (CRS defaults: SSL_PORT=8443 + a /healthz path), but our nginx listens on 80/443 and
+# has no /healthz, so it always reported "unhealthy". Just verify nginx answers on :80
+# (the HTTP server returns 301, which curl treats as success), independent of upstreams.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -fsS http://127.0.0.1/ -o /dev/null || exit 1
+
+EXPOSE 80
+EXPOSE 443
